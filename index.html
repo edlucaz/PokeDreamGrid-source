@@ -13,10 +13,10 @@
   body { display: flex; flex-direction: column; }
 
   #topbar {
-    display: flex; align-items: center; gap: 8px;
+    display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
     padding: 8px 14px; background: #161b22; border-bottom: 1px solid #21262d; flex-shrink: 0;
   }
-  #topbar .logo { display: flex; align-items: center; gap: 8px; font-family: "Segoe UI Variable Display", "Segoe UI", sans-serif; font-size: 15px; font-weight: 800; letter-spacing: 2.5px; margin-right: auto; }
+  #topbar .logo { display: flex; align-items: center; gap: 8px; font-family: "Segoe UI Variable Display", "Segoe UI", sans-serif; font-size: 15px; font-weight: 800; letter-spacing: 2.5px; margin-right: auto; flex-shrink: 0; }
   #topbar .logo svg { display: block; }
   button {
     background: #21262d; color: #e6edf3; border: 1px solid #30363d;
@@ -58,7 +58,9 @@
     background: #161b22; border: 1px solid #21262d; border-radius: 8px; overflow: hidden; }
   .panel.expanded { position: absolute; inset: 6px; z-index: 10; }
   .panel.off webview { visibility: hidden; }
-  .panel-header { display: flex; align-items: center; gap: 8px; padding: 4px 10px; background: #161b22; flex-shrink: 0; font-size: 12px; }
+  .panel-header { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; padding: 4px 10px; background: #161b22; flex-shrink: 0; font-size: 12px; }
+  .panel-header .name { min-width: 0; }
+  .panel-header .status { min-width: 0; }
   .dot { width: 8px; height: 8px; border-radius: 50%; background: #8b949e; flex-shrink: 0; opacity: .35; }
   .dot.ok { opacity: 1; box-shadow: 0 0 6px currentColor; }
   .dot.err { opacity: 1; box-shadow: 0 0 0 2px #f85149; }
