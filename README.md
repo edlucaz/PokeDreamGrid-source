@@ -41,20 +41,13 @@ Ou manualmente: `npm install` e depois `npm start`.
 
 ## Publicando uma atualização
 
-O app consulta `github.com/edlucaz/PokeDreamGrid-source` (repositório **privado**) via `electron-updater` (configurado em `package.json` > `build.publish`). Pra soltar uma versão nova:
+O app consulta `github.com/edlucaz/PokeDreamGrid-source` (repositório público) via `electron-updater` (configurado em `package.json` > `build.publish`). Como o repo é público, a checagem de update não precisa de nenhum token em tempo de execução — só quem publica precisa se autenticar. Pra soltar uma versão nova:
 
 1. Suba a versão em `package.json` (`"version"`).
 2. Gere um [token do GitHub](https://github.com/settings/tokens) com escopo `repo` e exporte `GH_TOKEN=seu_token`.
 3. Rode `npm run release` (Linux/AppImage) e/ou `npm run release:win` (Windows/NSIS) — isso builda, cria a Release no GitHub (com a tag da versão) e sobe os instaladores + o manifesto (`latest.yml`/`latest-linux.yml`) que o autoUpdater lê pra saber que há versão nova.
 
 O Windows precisa do alvo NSIS (já configurado) pra suportar atualização automática — o formato "portable" antigo não suporta.
-
-**Repositório privado: passo extra.** Como o repo não é público, o app baixando releases (o `autoUpdater` rodando na máquina de quem já tem o programa instalado) também precisa de autenticação — não só quem publica. Isso exige embutir um token de leitura no app, então:
-
-1. Gere um **fine-grained personal access token** em [github.com/settings/personal-access-tokens](https://github.com/settings/personal-access-tokens/new), com acesso restrito só a este repositório e permissão `Contents: Read-only` (nada além disso).
-2. Esse token vai embutido no `main.js` (ou numa variável de ambiente lida no build) e enviado como header `Authorization` nas checagens de update — ou seja, ele viaja dentro de todo instalador distribuído. Só use um token com esse escopo mínimo; nunca o `GH_TOKEN` amplo usado pra publicar.
-
-Esse passo ainda não está implementado no código — foi deixado pendente porque exige gerar e colar o token manualmente.
 
 ## Por dentro
 

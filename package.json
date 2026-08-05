@@ -58,8 +58,7 @@
     "publish": {
       "provider": "github",
       "owner": "edlucaz",
-      "repo": "PokeDreamGrid-source",
-      "private": true
+      "repo": "PokeDreamGrid-source"
     }
   },
   "dependencies": {
