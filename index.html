@@ -101,6 +101,7 @@
     <button id="accounts">👤 Treinadores</button>
     <button id="reloadAll">⟳ Atualizar tudo</button>
     <button id="cleanBtn" title="Esconde o chat e a lateral do jogo (.chat / .sidebar) pra sobrar tela. Best-effort: teste antes de deixar ligado, pode esconder navegação junto.">🧹 Limpar tela</button>
+    <button id="updateBtn" title="Checa se há uma versão nova do PokeDreamGrid no GitHub. Se houver, baixa sozinho e pergunta quando reiniciar pra instalar.">🔄 Checar atualização</button>
     <div id="menuWrap">
       <button id="menuBtn">☰ Opções</button>
       <div id="menu">
@@ -113,7 +114,6 @@
         <button id="webhookBtn" title="Configura um webhook do Discord pra receber aviso quando uma conta cair">🔗 Webhook Discord</button>
         <button id="layout" title="Como os painéis se organizam. Clique pra alternar: grade, uma coluna (empilhado) ou uma linha (lado a lado).">▦ Grade</button>
         <button id="errlogBtn" title="Abre o relatório de erros. Se o app travar ou fechar sozinho, envie esse arquivo pro suporte.">🐞 Erros</button>
-        <button id="updateBtn" title="Checa se há uma versão nova no GitHub. Se houver, baixa sozinho e pergunta quando reiniciar pra instalar.">🔄 Verificar atualizações</button>
       </div>
     </div>
   </div>
@@ -536,7 +536,7 @@
   document.getElementById('loginAll').onclick = loginAll;
   document.getElementById('reloadAll').onclick = () => webviews.forEach((w, i) => { if (!off[i]) w.reload(); });
   document.getElementById('errlogBtn').onclick = () => { try { window.pokeAPI.openErrorLog(); } catch {} menu.classList.remove('show'); };
-  document.getElementById('updateBtn').onclick = () => { try { window.pokeAPI.checkUpdate(); } catch {} menu.classList.remove('show'); };
+  document.getElementById('updateBtn').onclick = () => { try { window.pokeAPI.checkUpdate(); } catch {} };
 
   // ----- Dropdown "Opções" -----
   const menuWrap = document.getElementById('menuWrap');
