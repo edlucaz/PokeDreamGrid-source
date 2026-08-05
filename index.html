@@ -13,10 +13,10 @@
   body { display: flex; flex-direction: column; }
 
   #topbar {
-    display: flex; align-items: center; gap: 8px;
+    display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
     padding: 8px 14px; background: #161b22; border-bottom: 1px solid #21262d; flex-shrink: 0;
   }
-  #topbar .logo { display: flex; align-items: center; gap: 8px; font-family: "Segoe UI Variable Display", "Segoe UI", sans-serif; font-size: 15px; font-weight: 800; letter-spacing: 2.5px; margin-right: auto; }
+  #topbar .logo { display: flex; align-items: center; gap: 8px; font-family: "Segoe UI Variable Display", "Segoe UI", sans-serif; font-size: 15px; font-weight: 800; letter-spacing: 2.5px; margin-right: auto; flex-shrink: 0; }
   #topbar .logo svg { display: block; }
   button {
     background: #21262d; color: #e6edf3; border: 1px solid #30363d;
@@ -58,7 +58,9 @@
     background: #161b22; border: 1px solid #21262d; border-radius: 8px; overflow: hidden; }
   .panel.expanded { position: absolute; inset: 6px; z-index: 10; }
   .panel.off webview { visibility: hidden; }
-  .panel-header { display: flex; align-items: center; gap: 8px; padding: 4px 10px; background: #161b22; flex-shrink: 0; font-size: 12px; }
+  .panel-header { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; padding: 4px 10px; background: #161b22; flex-shrink: 0; font-size: 12px; }
+  .panel-header .name { min-width: 0; }
+  .panel-header .status { min-width: 0; }
   .dot { width: 8px; height: 8px; border-radius: 50%; background: #8b949e; flex-shrink: 0; opacity: .35; }
   .dot.ok { opacity: 1; box-shadow: 0 0 6px currentColor; }
   .dot.err { opacity: 1; box-shadow: 0 0 0 2px #f85149; }
@@ -193,13 +195,16 @@
     s.textContent = '.chat, .sidebar { display: none !important }';
   })()`;
 
-  // ----- Mantem janelas flutuantes do jogo (rastreador de tarefas, bestiario etc.) na posicao
-  // onde o jogador arrastou. Expandir/recolher um painel muda o tamanho real do webview, o que
-  // dispara um resize dentro do jogo; a propria logica do jogo reposiciona essas janelas pro
-  // canto ao redimensionar e nao restaura. So mexe em janelas que o jogador de fato arrastou
-  // (position absolute/fixed), reaplicando left/top/transform logo apos o resize.
+  // ----- Mantem janelas flutuantes do jogo (rastreador de tarefas, bestiario etc.) visiveis e na
+  // posicao onde o jogador arrastou. Expandir/recolher um painel (ou dividir a tela do Windows,
+  // que encolhe a janela do app) muda o tamanho real do webview, o que dispara um resize dentro
+  // do jogo; a propria logica do jogo reposiciona essas janelas pro canto ao redimensionar e nao
+  // restaura. Reaplica left/top/transform de quem foi arrastado, e em qualquer caso garante (best
+  // effort, via clampIntoView) que a janela nao fique com a posicao salva/calculada fora da tela
+  // menor — inclusive quem nunca foi arrastado e ficou na posicao padrao do jogo.
   const keepWinPosScript = `(() => {
     if (window.__pgWinKeep) return; window.__pgWinKeep = true;
+    const MARGIN = 32; // sobra o suficiente pra pegar a barra de titulo e arrastar de volta
     const saved = new Map();
     let dragEl = null, moved = false, sx = 0, sy = 0;
     const floatAncestor = (el) => {
@@ -220,13 +225,49 @@
       if (dragEl && moved) saved.set(dragEl, { left: dragEl.style.left, top: dragEl.style.top, transform: dragEl.style.transform });
       dragEl = null; moved = false;
     }, true);
+    // se um eixo esta quase todo fora da tela, calcula onde ele deveria estar pra caber inteiro
+    // (ou, se a janela e maior que a tela nesse eixo, encosta no canto 0 pra pelo menos a borda
+    // com a barra de titulo ficar alcancavel)
+    const eixoAlvo = (pos, tam, tela) => tam >= tela ? 0 : Math.min(Math.max(pos, 0), tela - tam);
+    // empurra o elemento de volta pra dentro da tela atual via left/top (funciona mesmo se a
+    // janela usa transform pra posicionar, porque o deslocamento se soma ao transform existente)
+    const clampIntoView = (el) => {
+      const r = el.getBoundingClientRect();
+      if (r.width === 0 || r.height === 0) return;
+      let dx = 0, dy = 0;
+      if (r.right < MARGIN || r.left > innerWidth - MARGIN) dx = eixoAlvo(r.left, r.width, innerWidth) - r.left;
+      if (r.bottom < MARGIN || r.top > innerHeight - MARGIN) dy = eixoAlvo(r.top, r.height, innerHeight) - r.top;
+      if (!dx && !dy) return;
+      const curLeft = parseFloat(el.style.left) || 0;
+      const curTop = parseFloat(el.style.top) || 0;
+      el.style.setProperty('left', (curLeft + dx) + 'px', 'important');
+      el.style.setProperty('top', (curTop + dy) + 'px', 'important');
+    };
     const restore = () => saved.forEach((pos, el) => {
       if (!document.body.contains(el)) { saved.delete(el); return; }
       if (pos.left) el.style.setProperty('left', pos.left, 'important');
       if (pos.top) el.style.setProperty('top', pos.top, 'important');
       if (pos.transform) el.style.setProperty('transform', pos.transform, 'important');
+      clampIntoView(el); // a posicao salva pode nao caber mais numa tela menor (tela dividida)
     });
-    window.addEventListener('resize', () => { [50, 200, 500, 1000].forEach(t => setTimeout(restore, t)); });
+    // Rede de seguranca: janelas que o jogo posicionou sozinho, sem o jogador jamais arrastar,
+    // tambem podem ficar fora da tela num redimensionamento grande. So mexe em elementos com
+    // left/top inline (marca de lib de arrastar tipo react-draggable/rnd) e tamanho de janela de
+    // verdade, pra nao atropelar tooltip/menu/animacao de entrada por engano.
+    const varredura = () => {
+      document.querySelectorAll('body *').forEach((el) => {
+        if (saved.has(el) || !el.style || (!el.style.left && !el.style.top)) return;
+        const cs = getComputedStyle(el);
+        if ((cs.position !== 'absolute' && cs.position !== 'fixed') || cs.display === 'none' || cs.visibility === 'hidden') return;
+        const r = el.getBoundingClientRect();
+        if (r.width < 200 || r.height < 100) return;
+        clampIntoView(el);
+      });
+    };
+    window.addEventListener('resize', () => {
+      [50, 200, 500, 1000].forEach(t => setTimeout(restore, t));
+      setTimeout(varredura, 1200); // por ultimo, com o layout do jogo ja assentado
+    });
   })()`;
 
   // ----- Login automático: vigia contínuo (a SPA nao navega de pagina ao deslogar) -----
