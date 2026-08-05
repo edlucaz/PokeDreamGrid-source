@@ -1,0 +1,36 @@
+name: Release
+
+# Build e publica os instaladores (Windows + Linux) como uma GitHub Release,
+# usando a versao do package.json. Disparo manual (aba Actions -> Release ->
+# Run workflow), pra nao depender de uma maquina especifica pra publicar.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+      - run: npm run release:win
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  release-linux:
+    needs: release-windows
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+      - run: npm run release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
