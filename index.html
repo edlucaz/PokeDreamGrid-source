@@ -1,0 +1,562 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<!-- Defesa em profundidade: a interface nao faz rede (fetch/XHR/WS bloqueados), so guarda contas
+     criptografadas via IPC. Se algum dado escapar do escape, nao ha canal pra vazar as contas salvas. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'none'; frame-src https://pokedream.com.br; child-src https://pokedream.com.br; base-uri 'none'; form-action 'none'">
+<title>PokeDreamGrid</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; background: #0d1117; color: #e6edf3; font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif; overflow: hidden; }
+  button, input { font-family: inherit; }
+  body { display: flex; flex-direction: column; }
+
+  #topbar {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 14px; background: #161b22; border-bottom: 1px solid #21262d; flex-shrink: 0;
+  }
+  #topbar .logo { display: flex; align-items: center; gap: 8px; font-family: "Segoe UI Variable Display", "Segoe UI", sans-serif; font-size: 15px; font-weight: 800; letter-spacing: 2.5px; margin-right: auto; }
+  #topbar .logo svg { display: block; }
+  button {
+    background: #21262d; color: #e6edf3; border: 1px solid #30363d;
+    border-radius: 6px; padding: 6px 12px; font-size: 12px; font-weight: 600; letter-spacing: .2px; cursor: pointer;
+  }
+  button:hover { background: #30363d; }
+  button.primary { background: #e3350d; border-color: #e3350d; color: #fff; font-weight: 600; }
+  button.primary:hover { background: #f0491f; }
+  button.on { background: #238636; border-color: #238636; }
+
+  /* Dropdown de opções */
+  #menuWrap { position: relative; }
+  #menu {
+    position: absolute; right: 0; top: calc(100% + 8px);
+    display: none; flex-direction: column; gap: 4px;
+    background: #161b22; border: 1px solid #30363d; border-radius: 8px;
+    padding: 6px; min-width: 190px; z-index: 200;
+    box-shadow: 0 10px 28px rgba(0,0,0,.45);
+  }
+  #menu.show { display: flex; }
+  #menu button { width: 100%; text-align: left; }
+
+  #grid {
+    flex: 1; display: grid; gap: 6px; padding: 6px;
+    grid-template-columns: 1fr 1fr; grid-auto-rows: 1fr;
+    position: relative; min-height: 0;
+  }
+  #grid.count-1 { grid-template-columns: 1fr; grid-template-rows: 1fr; }
+  #grid.count-2 { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr; }
+  #grid.count-3 { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; }
+  #grid.count-3 .panel:last-child { grid-column: 1 / -1; }   /* 3o painel ocupa a linha de baixo inteira */
+  #grid.count-4 { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; }
+  #grid.one-col { grid-template-columns: 1fr !important; grid-template-rows: none; }
+  #grid.one-col .panel { grid-column: auto !important; }
+  #grid.one-row { grid-template-columns: none !important; grid-template-rows: 1fr !important; grid-auto-flow: column; grid-auto-columns: 1fr; }
+  #grid.one-row .panel { grid-column: auto !important; }
+
+  .panel { display: flex; flex-direction: column; min-height: 0;
+    background: #161b22; border: 1px solid #21262d; border-radius: 8px; overflow: hidden; }
+  .panel.expanded { position: absolute; inset: 6px; z-index: 10; }
+  .panel.off webview { visibility: hidden; }
+  .panel-header { display: flex; align-items: center; gap: 8px; padding: 4px 10px; background: #161b22; flex-shrink: 0; font-size: 12px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: #8b949e; flex-shrink: 0; opacity: .35; }
+  .dot.ok { opacity: 1; box-shadow: 0 0 6px currentColor; }
+  .dot.err { opacity: 1; box-shadow: 0 0 0 2px #f85149; }
+  .dot.off { opacity: .18; }
+  .name { font-weight: 600; cursor: pointer; }
+  .status { color: #8b949e; font-size: 11px; margin-right: auto; }
+  .panel-header button { padding: 2px 8px; font-size: 11px; }
+  .panel-header .power.isoff { color: #f0491f; }
+  webview { flex: 1; border: none; background: #000; }
+
+  /* Modais (Contas / Webhook) */
+  .ovl { position: fixed; inset: 0; background: rgba(0,0,0,.6); display: none; align-items: center; justify-content: center; z-index: 100; }
+  .ovl.show { display: flex; }
+  .mdl { background: #161b22; border: 1px solid #30363d; border-radius: 10px; padding: 18px 20px; width: 460px; max-width: 92vw; }
+  .mdl h2 { font-size: 15px; margin-bottom: 4px; }
+  .mdl p.hint { font-size: 11px; color: #8b949e; margin-bottom: 14px; line-height: 1.5; }
+  .acc-row { display: grid; grid-template-columns: 74px 1fr 1fr 30px; gap: 6px; margin-bottom: 8px; align-items: center; }
+  .acc-row .acc-del { padding: 5px 0; background: #21262d; }
+  .acc-row .acc-del:hover { background: #6e2634; border-color: #f85149; }
+  .acc-row input, .mdl > input { background: #0d1117; border: 1px solid #30363d; border-radius: 6px; color: #e6edf3; padding: 6px 8px; font-size: 12px; width: 100%; }
+  .mdl > input { margin-bottom: 6px; }
+  .acc-row input:focus, .mdl input:focus { outline: none; border-color: #e3350d; }
+  .modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 14px; }
+</style>
+</head>
+<body>
+  <div id="topbar">
+    <span class="logo">
+      <svg width="24" height="24" viewBox="0 0 32 32">
+        <circle cx="16" cy="16" r="15" fill="#f6f8fa" stroke="#0b0f14" stroke-width="2"/>
+        <path d="M1.6 16a14.4 14.4 0 0 1 28.8 0Z" fill="#e3350d"/>
+        <path d="M4 12.5a12.4 12.4 0 0 1 10-6" fill="none" stroke="#ff6b4d" stroke-width="2" stroke-linecap="round" opacity=".8"/>
+        <rect x="1.2" y="14.4" width="29.6" height="3.2" fill="#0b0f14"/>
+        <circle cx="16" cy="16" r="4.6" fill="#f6f8fa" stroke="#0b0f14" stroke-width="2"/>
+        <circle cx="16" cy="16" r="2" fill="#cfe8ff"/>
+      </svg>
+      POKEDREAMGRID
+    </span>
+    <button id="loginAll" class="primary">▶ Logar equipe</button>
+    <button id="accounts">👤 Treinadores</button>
+    <button id="reloadAll">⟳ Atualizar tudo</button>
+    <button id="cleanBtn" title="Esconde o chat e a lateral do jogo (.chat / .sidebar) pra sobrar tela. Best-effort: teste antes de deixar ligado, pode esconder navegação junto.">🧹 Limpar tela</button>
+    <div id="menuWrap">
+      <button id="menuBtn">☰ Opções</button>
+      <div id="menu">
+        <button id="count" title="Quantas contas rodar ao mesmo tempo (1 a 2)">🔢 Painéis: 2</button>
+        <button id="alerts" title="Avisa (notificação do SO) quando uma conta cai">🔔 Alertas</button>
+        <button id="muteAll">🔊 Som</button>
+        <button id="eco">⚡ Eco</button>
+        <button id="awake" title="Impede o PC de dormir enquanto farma (a tela ainda pode desligar)">💤 Dormir</button>
+        <button id="minTray" title="O que o botão minimizar faz: esconder na bandeja ou minimizar normal na barra de tarefas">📥 Minimiza p/ bandeja</button>
+        <button id="webhookBtn" title="Configura um webhook do Discord pra receber aviso quando uma conta cair">🔗 Webhook Discord</button>
+        <button id="layout" title="Como os painéis se organizam. Clique pra alternar: grade, uma coluna (empilhado) ou uma linha (lado a lado).">▦ Grade</button>
+        <button id="errlogBtn" title="Abre o relatório de erros. Se o app travar ou fechar sozinho, envie esse arquivo pro suporte.">🐞 Erros</button>
+        <button id="updateBtn" title="Checa se há uma versão nova no GitHub. Se houver, baixa sozinho e pergunta quando reiniciar pra instalar.">🔄 Verificar atualizações</button>
+      </div>
+    </div>
+  </div>
+  <div id="grid"></div>
+
+  <div id="overlay" class="ovl">
+    <div id="modal" class="mdl">
+      <h2>Treinadores salvos</h2>
+      <p class="hint">Preencha e-mail e senha de cada painel. As senhas ficam criptografadas neste PC. "Logar equipe" entra automaticamente onde houver dados, e se a sessão cair o painel loga sozinho.</p>
+      <div id="accRows"></div>
+      <div class="modal-actions">
+        <button id="accCancel">Cancelar</button>
+        <button id="accSave" class="primary">Salvar</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="whOverlay" class="ovl">
+    <div class="mdl">
+      <h2>🔗 Webhook do Discord</h2>
+      <p class="hint">Cole a URL de um webhook do seu servidor pra receber um aviso aqui quando uma conta cair.</p>
+      <input id="whUrl" placeholder="https://discord.com/api/webhooks/...">
+      <div class="modal-actions">
+        <button id="whTest">Testar</button>
+        <button id="whCancel">Fechar</button>
+        <button id="whSave" class="primary">Salvar</button>
+      </div>
+    </div>
+  </div>
+
+<script>
+  // Relatorio de erros: qualquer erro de JS da interface vai pro arquivo (via main.js)
+  window.addEventListener('error', (e) => { try { window.pokeAPI.logError('interface', ((e.error && e.error.stack) || e.message || '?') + (e.filename ? ' @' + e.filename.split('/').pop() + ':' + e.lineno : '')); } catch {} });
+  window.addEventListener('unhandledrejection', (e) => { try { window.pokeAPI.logError('interface-promise', (e.reason && e.reason.stack) || String(e.reason)); } catch {} });
+
+  // PokeDream e uma SPA de rota unica: login/jogo trocam por estado do React, sem navegacao de
+  // pagina. Por isso o auto-login (abaixo) roda por um vigia continuo dentro do painel, e nao por
+  // evento de navegacao (que so idleworld tinha, com URL de /login dedicada).
+  const START_URL = 'https://pokedream.com.br/';
+  const grid = document.getElementById('grid');
+  const ACOR = ['#c07bf5', '#3987e5', '#1baf7a', '#eda100']; // cor de cada conta (1=violeta)
+
+  let accounts = [];
+  const webviews = [];
+  const off = [false, false, false, false];
+  let count = Math.min(2, Math.max(1, +localStorage.getItem('count') || 2)); // quantos paineis rodar (1 a 2)
+  let muted = localStorage.getItem('muted') === '1';
+
+  const blank = () => ({ name: '', email: '', senha: '' });
+  function normalize(arr) {
+    const out = [];
+    for (let i = 0; i < 2; i++) out.push(Object.assign(blank(), arr && arr[i]));
+    return out;
+  }
+  const defName = (i) => 'Treinador ' + (i + 1);
+
+  // ----- Modo Eco: limita o requestAnimationFrame do jogo (idle nao precisa de 60 fps) -----
+  // ponytail: nao intercepta cancelAnimationFrame; suficiente para game-loops comuns
+  const ecoScript = (fps) => `(() => {
+    if (!window.__eco) {
+      window.__eco = { native: window.requestAnimationFrame.bind(window), fps: 0, last: 0 };
+      window.requestAnimationFrame = (cb) => {
+        const s = window.__eco;
+        if (!s.fps) return s.native(cb);
+        const wait = Math.max(0, (1000 / s.fps) - (performance.now() - s.last));
+        return setTimeout(() => { s.last = performance.now(); s.native(cb); }, wait);
+      };
+    }
+    window.__eco.fps = ${fps};
+  })()`;
+
+  // ----- Limpar tela: esconde chat e lateral do jogo (classes reais vistas no bundle: .chat, .sidebar) -----
+  const cleanScript = (on) => `(() => {
+    const ID = 'pg-clean'; let s = document.getElementById(ID);
+    if (!${on}) { if (s) s.remove(); return; }
+    if (!s) { s = document.createElement('style'); s.id = ID; document.head.appendChild(s); }
+    s.textContent = '.chat, .sidebar { display: none !important }';
+  })()`;
+
+  // ----- Mantem janelas flutuantes do jogo (rastreador de tarefas, bestiario etc.) na posicao
+  // onde o jogador arrastou. Expandir/recolher um painel muda o tamanho real do webview, o que
+  // dispara um resize dentro do jogo; a propria logica do jogo reposiciona essas janelas pro
+  // canto ao redimensionar e nao restaura. So mexe em janelas que o jogador de fato arrastou
+  // (position absolute/fixed), reaplicando left/top/transform logo apos o resize.
+  const keepWinPosScript = `(() => {
+    if (window.__pgWinKeep) return; window.__pgWinKeep = true;
+    const saved = new Map();
+    let dragEl = null, moved = false, sx = 0, sy = 0;
+    const floatAncestor = (el) => {
+      while (el && el !== document.body) {
+        const p = getComputedStyle(el).position;
+        if (p === 'absolute' || p === 'fixed') return el;
+        el = el.parentElement;
+      }
+      return null;
+    };
+    document.addEventListener('mousedown', (e) => {
+      dragEl = floatAncestor(e.target); moved = false; sx = e.clientX; sy = e.clientY;
+    }, true);
+    document.addEventListener('mousemove', (e) => {
+      if (dragEl && (Math.abs(e.clientX - sx) > 3 || Math.abs(e.clientY - sy) > 3)) moved = true;
+    }, true);
+    document.addEventListener('mouseup', () => {
+      if (dragEl && moved) saved.set(dragEl, { left: dragEl.style.left, top: dragEl.style.top, transform: dragEl.style.transform });
+      dragEl = null; moved = false;
+    }, true);
+    const restore = () => saved.forEach((pos, el) => {
+      if (!document.body.contains(el)) { saved.delete(el); return; }
+      if (pos.left) el.style.setProperty('left', pos.left, 'important');
+      if (pos.top) el.style.setProperty('top', pos.top, 'important');
+      if (pos.transform) el.style.setProperty('transform', pos.transform, 'important');
+    });
+    window.addEventListener('resize', () => { [50, 200, 500, 1000].forEach(t => setTimeout(restore, t)); });
+  })()`;
+
+  // ----- Login automático: vigia contínuo (a SPA nao navega de pagina ao deslogar) -----
+  // Acha os campos pelo autocomplete (email / current-password), que sao atributos reais do
+  // formulario de login do jogo e nao mudam com minificacao. Se a aba de login nao estiver
+  // ativa (o form de registro usa autocomplete=new-password), tenta clicar na aba "Entrar".
+  const loginWatchScript = (email, senha) => `(() => {
+    if (window.__pgLoginWatch) return; window.__pgLoginWatch = true;
+    const EMAIL = ${JSON.stringify(email)}, SENHA = ${JSON.stringify(senha)};
+    const setVal = (el, val) => {
+      const st = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+      st.call(el, val);
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+    };
+    const findBtn = () => document.querySelector('.auth-submit') || [...document.querySelectorAll('button')].find(b => b.type === 'submit');
+    let cooldown = 0;
+    setInterval(() => {
+      if (Date.now() < cooldown) return;
+      const inputs = [...document.querySelectorAll('input')];
+      const u = inputs.find(i => i.autocomplete === 'email');
+      const p = inputs.find(i => i.autocomplete === 'current-password');
+      if (!u || !p) {
+        // pode estar na aba de registro (autocomplete=new-password): tenta voltar pra aba de login
+        const tab = [...document.querySelectorAll('.auth-tab')].find(x => /entrar|login|log ?in/i.test(x.textContent || ''));
+        if (tab) tab.click();
+        return;
+      }
+      const b = findBtn();
+      if (!b) return;
+      if (u.value !== EMAIL) setVal(u, EMAIL);
+      if (p.value !== SENHA) setVal(p, SENHA);
+      if (u.value === EMAIL && p.value === SENHA && !b.disabled) {
+        b.click();
+        cooldown = Date.now() + 15000; // evita resubmeter em loop se as credenciais estiverem erradas
+      }
+    }, 1000);
+  })()`;
+  function injectLoginWatch(wv, cred) {
+    if (!cred || !cred.email || !cred.senha) return;
+    wv.executeJavaScript(loginWatchScript(cred.email, cred.senha)).catch(() => {});
+  }
+
+  function criarPainel(i) {
+    const panel = document.createElement('div');
+    panel.className = 'panel';
+    panel.innerHTML = `
+      <div class="panel-header">
+        <span class="dot"></span>
+        <span class="name"></span>
+        <span class="status"></span>
+        <button class="zo">−</button>
+        <button class="zi">+</button>
+        <button class="reload">⟳</button>
+        <button class="expand">⛶</button>
+        <button class="power">⏻</button>
+      </div>`;
+    const wv = document.createElement('webview');
+    wv.partition = 'persist:conta' + (i + 1);
+    wv.setAttribute('webpreferences', 'spellcheck=no'); // sem dicionario por painel: nao ha campo de texto livre no jogo
+    wv.src = START_URL;
+    panel.appendChild(wv);
+    grid.appendChild(panel);
+    webviews.push(wv);
+
+    const dot = panel.querySelector('.dot');
+    const status = panel.querySelector('.status');
+    const nameEl = panel.querySelector('.name');
+    nameEl.textContent = accounts[i].name || defName(i);
+    nameEl.title = 'Clique duplo para renomear';
+
+    dot.style.background = dot.style.color = ACOR[i] || '#8b949e'; // cor da conta (o color alimenta o brilho quando online)
+    let falhou = false; // ultima carga falhou? (evita o did-stop-loading apagar o estado de erro)
+    wv.addEventListener('did-start-loading', () => { if (!off[i]) { falhou = false; dot.className = 'dot'; status.textContent = 'carregando…'; } });
+    wv.addEventListener('did-stop-loading', () => { if (!off[i] && !falhou) { dot.className = 'dot ok'; status.textContent = 'online'; } });
+
+    let fails = 0, alertedDown = false; // watchdog: falhas de carga do painel e se ja avisou a queda
+    let zoom = +(localStorage.getItem('zoom' + i) || 1);
+    const setZoom = (z) => {
+      zoom = Math.min(2, Math.max(0.5, Math.round(z * 10) / 10));
+      try { wv.setZoomFactor(zoom); } catch {}
+      localStorage.setItem('zoom' + i, zoom);
+    };
+    panel.querySelector('.zi').onclick = () => setZoom(zoom + 0.1);
+    panel.querySelector('.zo').onclick = () => setZoom(zoom - 0.1);
+
+    wv.addEventListener('dom-ready', () => {
+      if (!off[i]) { dot.className = 'dot ok'; status.textContent = 'online'; fails = 0; alertedDown = false; } // carregou: zera o watchdog
+      try {
+        wv.setAudioMuted(muted); wv.setZoomFactor(zoom);
+        wv.executeJavaScript(ecoScript(eco ? 15 : 0)).catch(() => {});
+        wv.executeJavaScript(cleanScript(cleanOn)).catch(() => {});
+        wv.executeJavaScript(keepWinPosScript).catch(() => {});
+        // jogo congelado com pagina viva: WebGL perdeu o contexto e nao restaurou em 4s -> recarrega
+        wv.executeJavaScript("(()=>{if(window.__pgGlWd)return;window.__pgGlWd=1;let tm;document.addEventListener('webglcontextlost',()=>{clearTimeout(tm);tm=setTimeout(()=>location.reload(),4000);},true);document.addEventListener('webglcontextrestored',()=>clearTimeout(tm),true);})()").catch(() => {});
+        injectLoginWatch(wv, accounts[i]);
+      } catch {}
+    });
+    wv.addEventListener('did-fail-load', (e) => {
+      if (e.errorCode === -3 || off[i]) return;
+      falhou = true; dot.className = 'dot err'; status.textContent = 'erro';
+      if (++fails === 3 && !alertedDown) { alertedDown = true; alerta(i, 'caiu'); } // queda sustentada: avisa
+      if (fails <= 5) setTimeout(() => { if (!off[i]) wv.reload(); }, 6000); // watchdog: tenta reconectar
+    });
+
+    panel.querySelector('.reload').onclick = () => { if (!off[i]) wv.reload(); };
+    panel.querySelector('.expand').onclick = () => toggleExpand(i);
+    panel.querySelector('.power').onclick = () => togglePower(i);
+    nameEl.ondblclick = () => {
+      const novo = prompt('Nome do treinador:', accounts[i].name || defName(i));
+      if (novo != null) { accounts[i].name = novo; nameEl.textContent = novo || defName(i); save(); }
+    };
+  }
+
+  // ----- Numero de paineis (1 a 2), escolhido no menu -----
+  const countBtn = document.getElementById('count');
+  function aplicaCountLayout() {
+    grid.classList.remove('count-1', 'count-2', 'count-3', 'count-4');
+    grid.classList.add('count-' + count);
+    countBtn.textContent = '🔢 Painéis: ' + count;
+    localStorage.setItem('count', count);
+  }
+  function build() { for (let i = 0; i < count; i++) criarPainel(i); aplicaCountLayout(); }
+  function setCount(n) {
+    n = Math.min(2, Math.max(1, n));
+    const atual = webviews.length;
+    count = n;
+    if (n < atual) { // remove os paineis do fim (remover do DOM ja destroi o webview)
+      for (let i = atual - 1; i >= n; i--) {
+        if (grid.children[i]) grid.children[i].remove();
+        webviews.pop();
+      }
+    } else if (n > atual) { // adiciona sem recarregar os existentes
+      for (let i = atual; i < n; i++) { off[i] = false; criarPainel(i); }
+    }
+    aplicaCountLayout();
+  }
+  countBtn.onclick = () => setCount(count === 2 ? 1 : count + 1); // cicla 2 -> 1 -> 2
+
+  function toggleExpand(i) {
+    const p = grid.children[i];
+    if (!p) return; // painel nao existe (rodando menos de 2)
+    const on = !p.classList.contains('expanded');
+    [...grid.children].forEach(c => c.classList.remove('expanded')); // um por vez
+    if (on) p.classList.add('expanded');
+  }
+
+  function togglePower(i) {
+    const panel = grid.children[i];
+    const dot = panel.querySelector('.dot');
+    const status = panel.querySelector('.status');
+    const btn = panel.querySelector('.power');
+    off[i] = !off[i];
+    panel.classList.toggle('off', off[i]);
+    btn.classList.toggle('isoff', off[i]);
+    if (off[i]) { webviews[i].src = 'about:blank'; dot.className = 'dot off'; status.textContent = 'desligado'; }
+    else { dot.className = 'dot'; status.textContent = 'carregando…'; webviews[i].src = START_URL; }
+  }
+
+  function loginAll() {
+    webviews.forEach((wv, i) => {
+      const c = accounts[i];
+      if (!c || !c.email || !c.senha) return;
+      // atraso entre contas: recarregar as 2 no mesmo instante soma o pico de CPU/rede
+      // dos dois carregamentos de WebGL e pode travar a janela por alguns segundos
+      setTimeout(() => {
+        if (off[i]) { togglePower(i); return; } // ao ligar, o dom-ready ja injeta o vigia de login
+        try { wv.reload(); } catch {} // forca um dom-ready novo, que reinjeta o vigia com as credenciais atuais
+      }, i * 1200);
+    });
+  }
+
+  async function save() { try { await window.pokeAPI.saveCreds(accounts); } catch {} }
+
+  // ----- Modal de contas -----
+  const overlay = document.getElementById('overlay');
+  function openAccounts() {
+    const rows = document.getElementById('accRows');
+    rows.innerHTML = '';
+    accounts.forEach((c, i) => {
+      const row = document.createElement('div');
+      row.className = 'acc-row';
+      row.innerHTML = `
+        <input data-i="${i}" data-f="name"  placeholder="Nome">
+        <input data-i="${i}" data-f="email" placeholder="E-mail">
+        <input data-i="${i}" data-f="senha" type="password" placeholder="Senha">
+        <button class="acc-del" title="Limpar esta conta">🗑</button>`;
+      const [vn, ve, vs] = row.querySelectorAll('input'); // valores por propriedade: nunca viram HTML
+      vn.value = c.name || ''; ve.value = c.email || ''; vs.value = c.senha || '';
+      row.querySelector('.acc-del').onclick = () => { vn.value = ''; ve.value = ''; vs.value = ''; vn.focus(); };
+      rows.appendChild(row);
+    });
+    overlay.classList.add('show');
+  }
+  document.getElementById('accounts').onclick = openAccounts;
+  document.getElementById('accCancel').onclick = () => overlay.classList.remove('show');
+  overlay.onclick = (e) => { if (e.target === overlay) overlay.classList.remove('show'); };
+  document.getElementById('accSave').onclick = async () => {
+    document.querySelectorAll('#accRows input').forEach(inp => {
+      accounts[+inp.dataset.i][inp.dataset.f] = inp.value;
+    });
+    grid.querySelectorAll('.name').forEach((el, i) => el.textContent = accounts[i].name || defName(i));
+    await save();
+    overlay.classList.remove('show');
+  };
+
+  // ----- Som -----
+  const muteBtn = document.getElementById('muteAll');
+  function applyMute() {
+    muteBtn.textContent = muted ? '🔇 Mudo' : '🔊 Som';
+    muteBtn.classList.toggle('on', muted);
+    webviews.forEach(w => { try { w.setAudioMuted(muted); } catch {} });
+    localStorage.setItem('muted', muted ? '1' : '0');
+  }
+  muteBtn.onclick = () => { muted = !muted; applyMute(); };
+
+  // ----- Eco -----
+  const ecoBtn = document.getElementById('eco');
+  let eco = localStorage.getItem('eco') !== '0'; // ligado por padrao
+  function applyEco() {
+    ecoBtn.textContent = eco ? '⚡ Eco' : '⚡ Eco off';
+    ecoBtn.classList.toggle('on', eco);
+    webviews.forEach((w, i) => { if (off[i]) return; try { w.executeJavaScript(ecoScript(eco ? 15 : 0)).catch(() => {}); } catch {} });
+    localStorage.setItem('eco', eco ? '1' : '0');
+  }
+  ecoBtn.onclick = () => { eco = !eco; applyEco(); };
+
+  // ----- Limpar tela (chat + sidebar) -----
+  const cleanBtn = document.getElementById('cleanBtn');
+  let cleanOn = localStorage.getItem('cleanOn') === '1'; // desligado por padrao ate confirmar que nao esconde navegacao
+  function applyClean() {
+    cleanBtn.classList.toggle('on', cleanOn);
+    webviews.forEach((w, i) => { if (off[i]) return; try { w.executeJavaScript(cleanScript(cleanOn)).catch(() => {}); } catch {} });
+    localStorage.setItem('cleanOn', cleanOn ? '1' : '0');
+  }
+  cleanBtn.onclick = () => { cleanOn = !cleanOn; applyClean(); };
+
+  // ----- Anti-sono: impede o PC de dormir enquanto farma -----
+  const awakeBtn = document.getElementById('awake');
+  let awake = localStorage.getItem('awake') === '1';
+  async function applyAwake() {
+    awakeBtn.textContent = awake ? '☕ Acordado' : '💤 Dormir';
+    awakeBtn.classList.toggle('on', awake);
+    try { await window.pokeAPI.setAwake(awake); } catch {}
+    localStorage.setItem('awake', awake ? '1' : '0');
+  }
+  awakeBtn.onclick = () => { awake = !awake; applyAwake(); };
+
+  // ----- Minimizar: pra bandeja (padrao) ou normal, na barra de tarefas -----
+  const minTrayBtn = document.getElementById('minTray');
+  let minTray = localStorage.getItem('minTray') !== '0'; // padrao: pra bandeja
+  async function applyMinTray() {
+    minTrayBtn.textContent = minTray ? '📥 Minimiza p/ bandeja' : '📥 Minimiza normal';
+    minTrayBtn.classList.toggle('on', minTray);
+    try { await window.pokeAPI.setMinToTray(minTray); } catch {}
+    localStorage.setItem('minTray', minTray ? '1' : '0');
+  }
+  minTrayBtn.onclick = () => { minTray = !minTray; applyMinTray(); };
+
+  // ----- Alertas: notifica (SO + webhook opcional) quando uma conta cai -----
+  const alertBtn = document.getElementById('alerts');
+  let alertsOn = localStorage.getItem('alerts') !== '0'; // ligado por padrao
+  function applyAlerts() {
+    alertBtn.classList.toggle('on', alertsOn);
+    localStorage.setItem('alerts', alertsOn ? '1' : '0');
+  }
+  alertBtn.onclick = () => { alertsOn = !alertsOn; applyAlerts(); };
+  function alerta(i, msg) {
+    if (!alertsOn) return;
+    const nome = (accounts[i] && accounts[i].name) || defName(i);
+    const texto = nome + ' ' + msg;
+    try { window.pokeAPI.notify('PokeDreamGrid', texto); } catch {}
+    webhookSend('🔴 PokeDreamGrid: ' + texto);
+  }
+
+  // ----- Webhook do Discord (opcional): a URL e do proprio usuario, envio via main (CSP nao deixa daqui) -----
+  let whUrl = localStorage.getItem('webhookUrl') || '';
+  function webhookSend(text) { if (!whUrl) return; try { window.pokeAPI.webhook(whUrl, text); } catch {} }
+  const whOverlay = document.getElementById('whOverlay');
+  const whInput = document.getElementById('whUrl');
+  document.getElementById('webhookBtn').onclick = () => { whInput.value = whUrl; whOverlay.classList.add('show'); menu.classList.remove('show'); };
+  document.getElementById('whCancel').onclick = () => whOverlay.classList.remove('show');
+  whOverlay.onclick = (e) => { if (e.target === whOverlay) whOverlay.classList.remove('show'); };
+  document.getElementById('whSave').onclick = () => {
+    whUrl = whInput.value.trim();
+    localStorage.setItem('webhookUrl', whUrl);
+    whOverlay.classList.remove('show');
+  };
+  document.getElementById('whTest').onclick = () => {
+    const url = whInput.value.trim();
+    if (!url) return;
+    try { window.pokeAPI.webhook(url, '✅ PokeDreamGrid conectado! Os avisos de queda vão chegar aqui.'); } catch {}
+  };
+
+  // ----- Layout dos paineis: grade (2x2) -> coluna (vertical) -> linha (horizontal) -----
+  let layoutMode = localStorage.getItem('layout') || 'grid';
+  const layoutBtn = document.getElementById('layout');
+  function applyLayout() {
+    grid.classList.remove('one-col', 'one-row');
+    if (layoutMode === 'col') grid.classList.add('one-col');
+    else if (layoutMode === 'row') grid.classList.add('one-row');
+    layoutBtn.textContent = layoutMode === 'col' ? '▤ Uma coluna' : layoutMode === 'row' ? '▥ Uma linha' : '▦ Grade';
+    localStorage.setItem('layout', layoutMode);
+  }
+  layoutBtn.onclick = () => { layoutMode = layoutMode === 'grid' ? 'col' : layoutMode === 'col' ? 'row' : 'grid'; applyLayout(); };
+
+  document.getElementById('loginAll').onclick = loginAll;
+  document.getElementById('reloadAll').onclick = () => webviews.forEach((w, i) => { if (!off[i]) w.reload(); });
+  document.getElementById('errlogBtn').onclick = () => { try { window.pokeAPI.openErrorLog(); } catch {} menu.classList.remove('show'); };
+  document.getElementById('updateBtn').onclick = () => { try { window.pokeAPI.checkUpdate(); } catch {} menu.classList.remove('show'); };
+
+  // ----- Dropdown "Opções" -----
+  const menuWrap = document.getElementById('menuWrap');
+  const menu = document.getElementById('menu');
+  document.getElementById('menuBtn').onclick = (e) => { e.stopPropagation(); menu.classList.toggle('show'); };
+  document.addEventListener('click', (e) => { if (!menuWrap.contains(e.target)) menu.classList.remove('show'); });
+
+  // ----- Atalhos vindos do main (Ctrl+1..4 expande, Ctrl+M mudo) -----
+  window.pokeAPI?.onHotkey?.((k) => {
+    if (k === 'mute') muteBtn.click();
+    else if (k.startsWith('expand')) toggleExpand(+k.slice(6));
+  });
+
+  // ----- Init -----
+  (async () => {
+    try { accounts = normalize(await window.pokeAPI.loadCreds()); }
+    catch { accounts = normalize([]); }
+    build();
+    applyMute(); applyEco(); applyClean(); applyAwake(); applyMinTray(); applyAlerts(); applyLayout();
+  })();
+</script>
+</body>
+</html>
