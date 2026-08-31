@@ -196,12 +196,13 @@
   })()`;
 
   // ----- Mantem janelas flutuantes do jogo (rastreador de tarefas, bestiario etc.) visiveis e na
-  // posicao onde o jogador arrastou. Expandir/recolher um painel (ou dividir a tela do Windows,
-  // que encolhe a janela do app) muda o tamanho real do webview, o que dispara um resize dentro
-  // do jogo; a propria logica do jogo reposiciona essas janelas pro canto ao redimensionar e nao
-  // restaura. Reaplica left/top/transform de quem foi arrastado, e em qualquer caso garante (best
-  // effort, via clampIntoView) que a janela nao fique com a posicao salva/calculada fora da tela
-  // menor — inclusive quem nunca foi arrastado e ficou na posicao padrao do jogo.
+  // posicao onde o jogador arrastou (ou, se nunca arrastou, na posicao em que a janela foi vista
+  // pela primeira vez). Expandir/recolher um painel (ou dividir a tela do Windows, que encolhe a
+  // janela do app) muda o tamanho real do webview, o que dispara um resize dentro do jogo; a
+  // propria logica do jogo reposiciona essas janelas pro canto ao redimensionar e nao restaura.
+  // Reaplica left/top/transform da posicao de origem (arrastada ou a primeira observada), e em
+  // qualquer caso garante (best effort, via clampIntoView) que a janela nao fique com a posicao
+  // salva/calculada fora da tela menor.
   const keepWinPosScript = `(() => {
     if (window.__pgWinKeep) return; window.__pgWinKeep = true;
     const MARGIN = 32; // sobra o suficiente pra pegar a barra de titulo e arrastar de volta
@@ -254,6 +255,11 @@
     // tambem podem ficar fora da tela num redimensionamento grande. So mexe em elementos com
     // left/top inline (marca de lib de arrastar tipo react-draggable/rnd) e tamanho de janela de
     // verdade, pra nao atropelar tooltip/menu/animacao de entrada por engano.
+    // Na primeira vez que uma dessas janelas e vista, grava a posicao atual em "saved" (antes
+    // de clampar) — vira a "casa" dela, do mesmo jeito que uma janela arrastada. Sem isso, cada
+    // expandir/recolher clampava a partir da ULTIMA posicao ja clampada (nao da original), e a
+    // janela ia "andando" de um lado pro outro a cada ida e volta em vez de voltar sempre pro
+    // mesmo lugar.
     const varredura = () => {
       document.querySelectorAll('body *').forEach((el) => {
         if (saved.has(el) || !el.style || (!el.style.left && !el.style.top)) return;
@@ -261,6 +267,7 @@
         if ((cs.position !== 'absolute' && cs.position !== 'fixed') || cs.display === 'none' || cs.visibility === 'hidden') return;
         const r = el.getBoundingClientRect();
         if (r.width < 200 || r.height < 100) return;
+        saved.set(el, { left: el.style.left, top: el.style.top, transform: el.style.transform });
         clampIntoView(el);
       });
     };
@@ -268,6 +275,10 @@
       [50, 200, 500, 1000].forEach(t => setTimeout(restore, t));
       setTimeout(varredura, 1200); // por ultimo, com o layout do jogo ja assentado
     });
+    // Varredura inicial (sem depender de um resize acontecer primeiro): pega a posicao de
+    // origem de janelas que o jogo abre sozinho (rastreador, bestiario etc.) assim que elas
+    // aparecem na tela, antes de qualquer expandir/recolher de painel mexer no tamanho.
+    [1500, 4000, 8000].forEach(t => setTimeout(varredura, t));
   })()`;
 
   // ----- Login automático: vigia contínuo (a SPA nao navega de pagina ao deslogar) -----
