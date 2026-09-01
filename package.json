@@ -42,7 +42,8 @@
         "AppImage"
       ],
       "category": "Game",
-      "icon": "build/icon.png"
+      "icon": "build/icon.png",
+      "artifactName": "${productName}.AppImage"
     },
     "win": {
       "target": [
