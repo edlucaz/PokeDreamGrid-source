@@ -260,6 +260,11 @@
     // expandir/recolher clampava a partir da ULTIMA posicao ja clampada (nao da original), e a
     // janela ia "andando" de um lado pro outro a cada ida e volta em vez de voltar sempre pro
     // mesmo lugar.
+    // So grava uma posicao nova como "casa" fora do foco (painel expandido em tela cheia): se o
+    // jogo ainda nao existia ou foi recriado enquanto o painel estava focado, a posicao vista
+    // ali e de tela cheia e nao serve de referencia pro modo dividido — melhor esperar a proxima
+    // varredura em modo normal do que aprender a casa errada. window.__pgExpanded e setado pelo
+    // index.html de fora sempre que o botao de foco (⛶) e alternado.
     const varredura = () => {
       document.querySelectorAll('body *').forEach((el) => {
         if (saved.has(el) || !el.style || (!el.style.left && !el.style.top)) return;
@@ -267,10 +272,36 @@
         if ((cs.position !== 'absolute' && cs.position !== 'fixed') || cs.display === 'none' || cs.visibility === 'hidden') return;
         const r = el.getBoundingClientRect();
         if (r.width < 200 || r.height < 100) return;
-        saved.set(el, { left: el.style.left, top: el.style.top, transform: el.style.transform });
+        if (!window.__pgExpanded) saved.set(el, { left: el.style.left, top: el.style.top, transform: el.style.transform });
         clampIntoView(el);
       });
     };
+    // Reforco continuo: num resize grande (ex: focar um painel em tela cheia e depois voltar
+    // pra tela dividida) o jogo pode levar mais de 1s reposicionando essas janelas sozinho, o
+    // que passava batido pelas 4 tentativas fixas de restore() acima e deixava a janela presa
+    // fora do lugar. Fica sempre observando mudanca de estilo nos elementos rastreados e reaplica
+    // a posicao de origem na hora, nao so logo apos um resize. Desconecta antes de escrever e
+    // reconecta depois pra nao reagir as proprias escritas (senao entraria em loop).
+    const WATCH_OPTS = { attributes: true, attributeFilter: ['style'], subtree: true };
+    const enforceEl = (el) => {
+      const pos = saved.get(el);
+      if (!pos) return;
+      if (pos.left) el.style.setProperty('left', pos.left, 'important');
+      if (pos.top) el.style.setProperty('top', pos.top, 'important');
+      if (pos.transform) el.style.setProperty('transform', pos.transform, 'important');
+      clampIntoView(el);
+    };
+    const enforceWatch = new MutationObserver((muts) => {
+      enforceWatch.disconnect();
+      const vistos = new Set();
+      muts.forEach((m) => {
+        if (m.type === 'attributes' && saved.has(m.target) && !vistos.has(m.target)) {
+          vistos.add(m.target); enforceEl(m.target);
+        }
+      });
+      enforceWatch.observe(document.body, WATCH_OPTS);
+    });
+    enforceWatch.observe(document.body, WATCH_OPTS);
     window.addEventListener('resize', () => {
       [50, 200, 500, 1000].forEach(t => setTimeout(restore, t));
       setTimeout(varredura, 1200); // por ultimo, com o layout do jogo ja assentado
@@ -424,6 +455,12 @@
     const on = !p.classList.contains('expanded');
     [...grid.children].forEach(c => c.classList.remove('expanded')); // um por vez
     if (on) p.classList.add('expanded');
+    // Avisa cada webview se o proprio painel dela esta em foco (tela cheia), pro
+    // keepWinPosScript nao aprender a posicao "casa" de uma janela flutuante enquanto
+    // ela so existe/apareceu no tamanho de tela cheia.
+    webviews.forEach((wv, idx) => {
+      wv.executeJavaScript(`window.__pgExpanded = ${idx === i && on}`).catch(() => {});
+    });
   }
 
   function togglePower(i) {
