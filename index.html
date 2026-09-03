@@ -281,7 +281,9 @@
     // que passava batido pelas 4 tentativas fixas de restore() acima e deixava a janela presa
     // fora do lugar. Fica sempre observando mudanca de estilo nos elementos rastreados e reaplica
     // a posicao de origem na hora, nao so logo apos um resize. Desconecta antes de escrever e
-    // reconecta depois pra nao reagir as proprias escritas (senao entraria em loop).
+    // reconecta depois pra nao reagir as proprias escritas (senao entraria em loop). Ignora o
+    // elemento sendo arrastado no momento (dragEl) — senao cada pixel do arrasto manual seria
+    // revertido na hora pra posicao salva, travando o arrastar.
     const WATCH_OPTS = { attributes: true, attributeFilter: ['style'], subtree: true };
     const enforceEl = (el) => {
       const pos = saved.get(el);
@@ -295,7 +297,7 @@
       enforceWatch.disconnect();
       const vistos = new Set();
       muts.forEach((m) => {
-        if (m.type === 'attributes' && saved.has(m.target) && !vistos.has(m.target)) {
+        if (m.type === 'attributes' && m.target !== dragEl && saved.has(m.target) && !vistos.has(m.target)) {
           vistos.add(m.target); enforceEl(m.target);
         }
       });
