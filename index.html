@@ -256,13 +256,16 @@
       if (top) el.style.setProperty('top', top, 'important');
       if (transform) el.style.setProperty('transform', transform, 'important');
     };
-    document.addEventListener('mousedown', (e) => {
+    // Pointer events (nao mouse) pra cobrir arrasto por touch/caneta alem de mouse: numa lib de
+    // arrastar que so reaja a pointerdown/up, um dragEl travado em mousedown nunca seria setado,
+    // e o enforceWatch abaixo brigaria com o arrasto (a mesma trava que o commit anterior corrigiu).
+    document.addEventListener('pointerdown', (e) => {
       dragEl = floatAncestor(e.target); moved = false; sx = e.clientX; sy = e.clientY;
     }, true);
-    document.addEventListener('mousemove', (e) => {
+    document.addEventListener('pointermove', (e) => {
       if (dragEl && (Math.abs(e.clientX - sx) > 3 || Math.abs(e.clientY - sy) > 3)) moved = true;
     }, true);
-    document.addEventListener('mouseup', () => {
+    document.addEventListener('pointerup', () => {
       if (dragEl && moved) saved.set(dragEl, capture(dragEl));
       dragEl = null; moved = false;
     }, true);
@@ -286,6 +289,7 @@
     };
     const restore = () => saved.forEach((pos, el) => {
       if (!document.body.contains(el)) { saved.delete(el); return; }
+      if (el === dragEl) return; // nao brigar com um arrasto em andamento (ex: resize do SO no meio do arrasto)
       applyPos(el, pos);
       clampIntoView(el); // a posicao escalada pode nao caber mesmo assim (ex: janela maior que a tela)
     });
@@ -304,8 +308,12 @@
     // varredura em modo normal do que aprender a casa errada. window.__pgExpanded e setado pelo
     // index.html de fora sempre que o botao de foco (⛶) e alternado.
     const varredura = () => {
-      document.querySelectorAll('body *').forEach((el) => {
-        if (saved.has(el) || !el.style || (!el.style.left && !el.style.top)) return;
+      // '[style]' em vez de 'body *': so elementos com atributo style inline podem ter left/top
+      // setado (o filtro logo abaixo exige isso de qualquer forma), e via de regra sao bem menos
+      // que o total de nos do DOM do jogo — cada varredura (3 por carregamento de painel) fica
+      // mais barata sem mudar quais janelas ela encontra.
+      document.querySelectorAll('[style]').forEach((el) => {
+        if (saved.has(el) || !el.style.left && !el.style.top) return;
         const cs = getComputedStyle(el);
         if ((cs.position !== 'absolute' && cs.position !== 'fixed') || cs.display === 'none' || cs.visibility === 'hidden') return;
         const r = el.getBoundingClientRect();
@@ -330,13 +338,16 @@
       clampIntoView(el);
     };
     const enforceWatch = new MutationObserver((muts) => {
-      enforceWatch.disconnect();
-      const vistos = new Set();
+      // So desconecta/reconecta (caro se repetido sem parar) quando alguma mutacao e de fato de
+      // uma janela rastreada: o jogo anima varios outros elementos absolute/fixed por style
+      // inline (barra de vida, tooltip etc.) que passariam por aqui a troco de nada sem esse filtro.
+      const alvos = new Set();
       muts.forEach((m) => {
-        if (m.type === 'attributes' && m.target !== dragEl && saved.has(m.target) && !vistos.has(m.target)) {
-          vistos.add(m.target); enforceEl(m.target);
-        }
+        if (m.type === 'attributes' && m.target !== dragEl && saved.has(m.target)) alvos.add(m.target);
       });
+      if (!alvos.size) return;
+      enforceWatch.disconnect();
+      alvos.forEach(enforceEl);
       enforceWatch.observe(document.body, WATCH_OPTS);
     });
     enforceWatch.observe(document.body, WATCH_OPTS);
@@ -441,6 +452,10 @@
         wv.executeJavaScript(ecoScript(eco ? 15 : 0)).catch(() => {});
         wv.executeJavaScript(cleanScript(cleanOn)).catch(() => {});
         wv.executeJavaScript(keepWinPosScript).catch(() => {});
+        // um reload (queda de conexao, botao reload, loginAll, power-cycle) cria uma pagina nova
+        // com window.__pgExpanded sempre indefinido, mesmo que o painel continue expandido; sem
+        // isso a primeira varredura aprenderia o layout de tela cheia como "casa" da janela.
+        wv.executeJavaScript('window.__pgExpanded = ' + panel.classList.contains('expanded')).catch(() => {});
         // jogo congelado com pagina viva: WebGL perdeu o contexto e nao restaurou em 4s -> recarrega
         wv.executeJavaScript("(()=>{if(window.__pgGlWd)return;window.__pgGlWd=1;let tm;document.addEventListener('webglcontextlost',()=>{clearTimeout(tm);tm=setTimeout(()=>location.reload(),4000);},true);document.addEventListener('webglcontextrestored',()=>clearTimeout(tm),true);})()").catch(() => {});
         injectLoginWatch(wv, accounts[i]);
