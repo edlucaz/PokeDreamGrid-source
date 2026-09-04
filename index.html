@@ -200,9 +200,10 @@
   // pela primeira vez). Expandir/recolher um painel (ou dividir a tela do Windows, que encolhe a
   // janela do app) muda o tamanho real do webview, o que dispara um resize dentro do jogo; a
   // propria logica do jogo reposiciona essas janelas pro canto ao redimensionar e nao restaura.
-  // Reaplica left/top/transform da posicao de origem (arrastada ou a primeira observada), e em
-  // qualquer caso garante (best effort, via clampIntoView) que a janela nao fique com a posicao
-  // salva/calculada fora da tela menor.
+  // Reaplica left/top/transform da posicao de origem (arrastada ou a primeira observada),
+  // reescalados pra fracao equivalente da tela atual (pra maximizar/dividir de volta manter a
+  // janela no mesmo lugar "relativo", nao no mesmo pixel bruto), e em qualquer caso garante (best
+  // effort, via clampIntoView) que a janela nao fique com a posicao calculada fora da tela menor.
   const keepWinPosScript = `(() => {
     if (window.__pgWinKeep) return; window.__pgWinKeep = true;
     const MARGIN = 32; // sobra o suficiente pra pegar a barra de titulo e arrastar de volta
@@ -216,6 +217,45 @@
       }
       return null;
     };
+    // A "casa" da janela e guardada como FRACAO (0-1) da tela no momento da captura, nao em
+    // pixel bruto: uma janela arrastada pra 65% da largura na tela dividida deve reaparecer a
+    // 65% da largura ao maximizar o painel (tela ~2x mais larga), e voltar aos mesmos 65% ao
+    // redividir a tela depois. Guardar so o pixel absoluto (jeito antigo) fazia a janela ficar
+    // perto da borda esquerda ao maximizar, porque o mesmo valor em px passa a representar uma
+    // fracao bem menor da tela quando ela fica maior.
+    const numPx = (v) => { const n = parseFloat(v); return Number.isFinite(n) ? n : null; };
+    const TRANSLATE_RE = /translate(3d)?\(\s*(-?[\d.]+)px\s*,\s*(-?[\d.]+)px/;
+    const capture = (el) => {
+      const w = innerWidth, h = innerHeight;
+      const leftPx = numPx(el.style.left), topPx = numPx(el.style.top);
+      const tm = TRANSLATE_RE.exec(el.style.transform || '');
+      return {
+        left: el.style.left, top: el.style.top, transform: el.style.transform,
+        leftFrac: (leftPx != null && w) ? leftPx / w : null,
+        topFrac: (topPx != null && h) ? topPx / h : null,
+        txFrac: (tm && w) ? parseFloat(tm[2]) / w : null,
+        tyFrac: (tm && h) ? parseFloat(tm[3]) / h : null,
+      };
+    };
+    // Reaplica a posicao salva reescalando pela tela atual (via as fracoes de "capture" acima);
+    // so cai pro valor bruto em px quando nao havia fracao pra aquele eixo (ex: transform sem
+    // translate, ou left/top vazio).
+    const applyPos = (el, pos) => {
+      const w = innerWidth, h = innerHeight;
+      const left = pos.leftFrac != null ? (pos.leftFrac * w) + 'px' : pos.left;
+      const top = pos.topFrac != null ? (pos.topFrac * h) + 'px' : pos.top;
+      let transform = pos.transform;
+      if (transform && (pos.txFrac != null || pos.tyFrac != null)) {
+        const tx = pos.txFrac != null ? pos.txFrac * w : 0;
+        const ty = pos.tyFrac != null ? pos.tyFrac * h : 0;
+        transform = transform.replace(TRANSLATE_RE, (m, is3d) => is3d
+          ? 'translate3d(' + tx + 'px, ' + ty + 'px, 0px)'
+          : 'translate(' + tx + 'px, ' + ty + 'px)');
+      }
+      if (left) el.style.setProperty('left', left, 'important');
+      if (top) el.style.setProperty('top', top, 'important');
+      if (transform) el.style.setProperty('transform', transform, 'important');
+    };
     document.addEventListener('mousedown', (e) => {
       dragEl = floatAncestor(e.target); moved = false; sx = e.clientX; sy = e.clientY;
     }, true);
@@ -223,7 +263,7 @@
       if (dragEl && (Math.abs(e.clientX - sx) > 3 || Math.abs(e.clientY - sy) > 3)) moved = true;
     }, true);
     document.addEventListener('mouseup', () => {
-      if (dragEl && moved) saved.set(dragEl, { left: dragEl.style.left, top: dragEl.style.top, transform: dragEl.style.transform });
+      if (dragEl && moved) saved.set(dragEl, capture(dragEl));
       dragEl = null; moved = false;
     }, true);
     // se um eixo esta quase todo fora da tela, calcula onde ele deveria estar pra caber inteiro
@@ -246,10 +286,8 @@
     };
     const restore = () => saved.forEach((pos, el) => {
       if (!document.body.contains(el)) { saved.delete(el); return; }
-      if (pos.left) el.style.setProperty('left', pos.left, 'important');
-      if (pos.top) el.style.setProperty('top', pos.top, 'important');
-      if (pos.transform) el.style.setProperty('transform', pos.transform, 'important');
-      clampIntoView(el); // a posicao salva pode nao caber mais numa tela menor (tela dividida)
+      applyPos(el, pos);
+      clampIntoView(el); // a posicao escalada pode nao caber mesmo assim (ex: janela maior que a tela)
     });
     // Rede de seguranca: janelas que o jogo posicionou sozinho, sem o jogador jamais arrastar,
     // tambem podem ficar fora da tela num redimensionamento grande. So mexe em elementos com
@@ -272,7 +310,7 @@
         if ((cs.position !== 'absolute' && cs.position !== 'fixed') || cs.display === 'none' || cs.visibility === 'hidden') return;
         const r = el.getBoundingClientRect();
         if (r.width < 200 || r.height < 100) return;
-        if (!window.__pgExpanded) saved.set(el, { left: el.style.left, top: el.style.top, transform: el.style.transform });
+        if (!window.__pgExpanded) saved.set(el, capture(el));
         clampIntoView(el);
       });
     };
@@ -288,9 +326,7 @@
     const enforceEl = (el) => {
       const pos = saved.get(el);
       if (!pos) return;
-      if (pos.left) el.style.setProperty('left', pos.left, 'important');
-      if (pos.top) el.style.setProperty('top', pos.top, 'important');
-      if (pos.transform) el.style.setProperty('transform', pos.transform, 'important');
+      applyPos(el, pos);
       clampIntoView(el);
     };
     const enforceWatch = new MutationObserver((muts) => {
