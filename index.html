@@ -200,10 +200,12 @@
   // pela primeira vez). Expandir/recolher um painel (ou dividir a tela do Windows, que encolhe a
   // janela do app) muda o tamanho real do webview, o que dispara um resize dentro do jogo; a
   // propria logica do jogo reposiciona essas janelas pro canto ao redimensionar e nao restaura.
-  // Reaplica left/top/transform da posicao de origem (arrastada ou a primeira observada),
-  // reescalados pra fracao equivalente da tela atual (pra maximizar/dividir de volta manter a
-  // janela no mesmo lugar "relativo", nao no mesmo pixel bruto), e em qualquer caso garante (best
-  // effort, via clampIntoView) que a janela nao fique com a posicao calculada fora da tela menor.
+  // Reaplica a posicao de origem (arrastada ou a primeira observada) ancorada ao lado da tela
+  // mais proximo dela (esquerda/direita e cima/baixo), guardando so a margem ate essa borda como
+  // fracao da tela: uma janela perto da borda direita continua colada na direita ao maximizar ou
+  // voltar a dividir a tela, em vez de derivar pro meio por ancorar sempre a partir da esquerda.
+  // E em qualquer caso garante (best effort, via clampIntoView) que a janela nao fique com a
+  // posicao calculada fora da tela menor.
   const keepWinPosScript = `(() => {
     if (window.__pgWinKeep) return; window.__pgWinKeep = true;
     const MARGIN = 32; // sobra o suficiente pra pegar a barra de titulo e arrastar de volta
@@ -217,44 +219,37 @@
       }
       return null;
     };
-    // A "casa" da janela e guardada como FRACAO (0-1) da tela no momento da captura, nao em
-    // pixel bruto: uma janela arrastada pra 65% da largura na tela dividida deve reaparecer a
-    // 65% da largura ao maximizar o painel (tela ~2x mais larga), e voltar aos mesmos 65% ao
-    // redividir a tela depois. Guardar so o pixel absoluto (jeito antigo) fazia a janela ficar
-    // perto da borda esquerda ao maximizar, porque o mesmo valor em px passa a representar uma
-    // fracao bem menor da tela quando ela fica maior.
-    const numPx = (v) => { const n = parseFloat(v); return Number.isFinite(n) ? n : null; };
-    const TRANSLATE_RE = /translate(3d)?\(\s*(-?[\d.]+)px\s*,\s*(-?[\d.]+)px/;
+    // Guarda a "casa" pela borda mais proxima em cada eixo (a janela pode ter sido posicionada
+    // pelo jogo ou arrastada pelo jogador perto de qualquer lado), com a margem ate essa borda
+    // como fracao (0-1) da tela no momento da captura — nao a posicao em si. Uma janela a 40px
+    // da borda direita numa tela de 800px (fracao 0.05) reaparece a 5% de distancia da direita
+    // numa tela de 1600px (80px), continuando colada no mesmo lado em vez de aparecer no meio.
+    // Usa a posicao RENDERIZADA (getBoundingClientRect), nao os valores crus de left/top/transform:
+    // funciona igual nao importa se o jogo posiciona a janela via left/top em px, porcentagem ou
+    // transform, sem precisar entender o mecanismo exato de cada um.
     const capture = (el) => {
+      const r = el.getBoundingClientRect();
       const w = innerWidth, h = innerHeight;
-      const leftPx = numPx(el.style.left), topPx = numPx(el.style.top);
-      const tm = TRANSLATE_RE.exec(el.style.transform || '');
-      return {
-        left: el.style.left, top: el.style.top, transform: el.style.transform,
-        leftFrac: (leftPx != null && w) ? leftPx / w : null,
-        topFrac: (topPx != null && h) ? topPx / h : null,
-        txFrac: (tm && w) ? parseFloat(tm[2]) / w : null,
-        tyFrac: (tm && h) ? parseFloat(tm[3]) / h : null,
-      };
+      const marL = r.left, marR = w - r.right, marT = r.top, marB = h - r.bottom;
+      const ax = marL <= marR ? 'left' : 'right';
+      const ay = marT <= marB ? 'top' : 'bottom';
+      return { ax, ay, mxFrac: (ax === 'left' ? marL : marR) / w, myFrac: (ay === 'top' ? marT : marB) / h };
     };
-    // Reaplica a posicao salva reescalando pela tela atual (via as fracoes de "capture" acima);
-    // so cai pro valor bruto em px quando nao havia fracao pra aquele eixo (ex: transform sem
-    // translate, ou left/top vazio).
+    // Empurra o elemento (delta em left/top, que se soma a qualquer transform existente — mesmo
+    // truque do clampIntoView logo abaixo) da posicao atual pra posicao alvo, calculada mantendo
+    // a margem guardada em "capture" ate a borda ancorada, na tela ATUAL.
     const applyPos = (el, pos) => {
+      const r = el.getBoundingClientRect();
+      if (r.width === 0 || r.height === 0) return;
       const w = innerWidth, h = innerHeight;
-      const left = pos.leftFrac != null ? (pos.leftFrac * w) + 'px' : pos.left;
-      const top = pos.topFrac != null ? (pos.topFrac * h) + 'px' : pos.top;
-      let transform = pos.transform;
-      if (transform && (pos.txFrac != null || pos.tyFrac != null)) {
-        const tx = pos.txFrac != null ? pos.txFrac * w : 0;
-        const ty = pos.tyFrac != null ? pos.tyFrac * h : 0;
-        transform = transform.replace(TRANSLATE_RE, (m, is3d) => is3d
-          ? 'translate3d(' + tx + 'px, ' + ty + 'px, 0px)'
-          : 'translate(' + tx + 'px, ' + ty + 'px)');
-      }
-      if (left) el.style.setProperty('left', left, 'important');
-      if (top) el.style.setProperty('top', top, 'important');
-      if (transform) el.style.setProperty('transform', transform, 'important');
+      const targetLeft = pos.ax === 'left' ? pos.mxFrac * w : w - r.width - pos.mxFrac * w;
+      const targetTop = pos.ay === 'top' ? pos.myFrac * h : h - r.height - pos.myFrac * h;
+      const dx = targetLeft - r.left, dy = targetTop - r.top;
+      if (!dx && !dy) return;
+      const curLeft = parseFloat(el.style.left) || 0;
+      const curTop = parseFloat(el.style.top) || 0;
+      el.style.setProperty('left', (curLeft + dx) + 'px', 'important');
+      el.style.setProperty('top', (curTop + dy) + 'px', 'important');
     };
     // Pointer events (nao mouse) pra cobrir arrasto por touch/caneta alem de mouse: numa lib de
     // arrastar que so reaja a pointerdown/up, um dragEl travado em mousedown nunca seria setado,
