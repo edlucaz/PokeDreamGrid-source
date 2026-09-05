@@ -297,11 +297,14 @@
     // expandir/recolher clampava a partir da ULTIMA posicao ja clampada (nao da original), e a
     // janela ia "andando" de um lado pro outro a cada ida e volta em vez de voltar sempre pro
     // mesmo lugar.
-    // So grava uma posicao nova como "casa" fora do foco (painel expandido em tela cheia): se o
-    // jogo ainda nao existia ou foi recriado enquanto o painel estava focado, a posicao vista
-    // ali e de tela cheia e nao serve de referencia pro modo dividido — melhor esperar a proxima
-    // varredura em modo normal do que aprender a casa errada. window.__pgExpanded e setado pelo
-    // index.html de fora sempre que o botao de foco (⛶) e alternado.
+    // Aprende em QUALQUER tamanho de tela (painel expandido ou nao): como "capture" guarda a
+    // margem ate a borda mais proxima como fracao (nao a posicao em si), uma janela vista pela
+    // primeira vez em tela cheia tem uma casa igualmente valida pra tela dividida. Restringir o
+    // aprendizado a "so fora do foco" (jeito antigo, de quando a casa era so uma fracao a partir
+    // da esquerda) so adiava o problema: se a janela nascesse com o painel expandido, ficava sem
+    // casa nenhuma ate a varredura de seguranca seguinte, que ai aprendia de vez a posicao que o
+    // proprio jogo tinha jogado pro meio da tela ao recolher — travando o bug que essa varredura
+    // existe pra evitar.
     const varredura = () => {
       // '[style]' em vez de 'body *': so elementos com atributo style inline podem ter left/top
       // setado (o filtro logo abaixo exige isso de qualquer forma), e via de regra sao bem menos
@@ -313,7 +316,7 @@
         if ((cs.position !== 'absolute' && cs.position !== 'fixed') || cs.display === 'none' || cs.visibility === 'hidden') return;
         const r = el.getBoundingClientRect();
         if (r.width < 200 || r.height < 100) return;
-        if (!window.__pgExpanded) saved.set(el, capture(el));
+        saved.set(el, capture(el));
         clampIntoView(el);
       });
     };
@@ -447,10 +450,6 @@
         wv.executeJavaScript(ecoScript(eco ? 15 : 0)).catch(() => {});
         wv.executeJavaScript(cleanScript(cleanOn)).catch(() => {});
         wv.executeJavaScript(keepWinPosScript).catch(() => {});
-        // um reload (queda de conexao, botao reload, loginAll, power-cycle) cria uma pagina nova
-        // com window.__pgExpanded sempre indefinido, mesmo que o painel continue expandido; sem
-        // isso a primeira varredura aprenderia o layout de tela cheia como "casa" da janela.
-        wv.executeJavaScript('window.__pgExpanded = ' + panel.classList.contains('expanded')).catch(() => {});
         // jogo congelado com pagina viva: WebGL perdeu o contexto e nao restaurou em 4s -> recarrega
         wv.executeJavaScript("(()=>{if(window.__pgGlWd)return;window.__pgGlWd=1;let tm;document.addEventListener('webglcontextlost',()=>{clearTimeout(tm);tm=setTimeout(()=>location.reload(),4000);},true);document.addEventListener('webglcontextrestored',()=>clearTimeout(tm),true);})()").catch(() => {});
         injectLoginWatch(wv, accounts[i]);
@@ -503,12 +502,6 @@
     const on = !p.classList.contains('expanded');
     [...grid.children].forEach(c => c.classList.remove('expanded')); // um por vez
     if (on) p.classList.add('expanded');
-    // Avisa cada webview se o proprio painel dela esta em foco (tela cheia), pro
-    // keepWinPosScript nao aprender a posicao "casa" de uma janela flutuante enquanto
-    // ela so existe/apareceu no tamanho de tela cheia.
-    webviews.forEach((wv, idx) => {
-      wv.executeJavaScript(`window.__pgExpanded = ${idx === i && on}`).catch(() => {});
-    });
   }
 
   function togglePower(i) {
