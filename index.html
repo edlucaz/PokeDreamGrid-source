@@ -221,6 +221,61 @@
     s.textContent = '.spellbar-shell:not([style*="left"]) { left: clamp(calc(var(--pg-bar-hw, 0px) + 8px), var(--pg-bar-x, 50vw), calc(100vw - var(--pg-bar-hw, 0px) - 8px)) !important }';
     document.head.appendChild(s);
   })()`;
+  // ----- Barra de ataques ARRASTADA volta pro lugar: as janelas comuns do jogo guardam a "casa" e
+  // so ajustam a posicao visivel ao redimensionar; a barra (como HUD da unidade, chat e banner de
+  // chefe) sobrescreve a propria posicao com a versao empurrada pra caber (resize -> clamp do
+  // estado). Colocada a direita com o painel maximizado, voltar pra tela dividida a empurrava e ao
+  // maximizar de novo ela nao voltava. Aqui: grava a casa so quando o JOGADOR solta a barra apos
+  // arrastar (evento isTrusted, deslocamento real) e, depois de cada resize, se o jogo a deixou
+  // longe da casa (ajustada pra caber), devolve usando o proprio arrasto do jogo (eventos de
+  // ponteiro na barra) — assim o estado do jogo e a tela continuam iguais, sem brigar com o React.
+  const keepBarScript = `(() => {
+    if (window.__pgBarHome) return; window.__pgBarHome = true;
+    const SEL = '.spellbar-shell', KEY = 'pg:spellBarHome', MARGEM = 2;
+    let home = null;
+    try { home = JSON.parse(localStorage.getItem(KEY)); } catch {}
+    if (!home) try { // primeira vez: parte da posicao que o proprio jogo salvou
+      const p = JSON.parse(localStorage.getItem('pokeidle:v1')).state.spellBarPos;
+      if (p && isFinite(p.x) && isFinite(p.y)) home = { x: p.x, y: p.y };
+    } catch {}
+    const pos = (b) => { const x = parseFloat(b.style.left), y = parseFloat(b.style.top); return isFinite(x) && isFinite(y) ? { x, y } : null; };
+    let apertado = null, restaurando = false;
+    document.addEventListener('pointerdown', (e) => {
+      if (e.isTrusted && e.target.closest && e.target.closest(SEL)) apertado = { x: e.clientX, y: e.clientY };
+    }, true);
+    document.addEventListener('pointerup', (e) => {
+      const a = apertado; apertado = null;
+      if (!e.isTrusted || restaurando || !a || Math.hypot(e.clientX - a.x, e.clientY - a.y) < 6) return; // clique em golpe nao conta
+      setTimeout(() => {
+        const b = document.querySelector(SEL), p = b && pos(b);
+        if (p) { home = p; try { localStorage.setItem(KEY, JSON.stringify(p)); } catch {} }
+      }, 100);
+    }, true);
+    const frame = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    const arrasta = async (b, de, para) => {
+      restaurando = true;
+      const P = Element.prototype, orig = [P.setPointerCapture, P.releasePointerCapture, P.hasPointerCapture];
+      P.setPointerCapture = P.releasePointerCapture = function () {}; P.hasPointerCapture = () => false; // ponteiro sintetico nao tem captura
+      try {
+        const ev = (type, x, y) => b.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, composed: true,
+          pointerId: 77, pointerType: 'mouse', isPrimary: true, button: 0, buttons: type === 'pointerup' ? 0 : 1, clientX: x, clientY: y }));
+        const cx = de.x + 4, cy = de.y + 4;
+        ev('pointerdown', cx, cy); await frame();
+        ev('pointermove', cx + para.x - de.x, cy + para.y - de.y); await frame();
+        ev('pointerup', cx + para.x - de.x, cy + para.y - de.y); await frame();
+      } finally { [P.setPointerCapture, P.releasePointerCapture, P.hasPointerCapture] = orig; restaurando = false; }
+    };
+    const confere = async () => {
+      const b = document.querySelector(SEL);
+      if (!home || !b || apertado || restaurando || !b.offsetWidth) return;
+      const atual = pos(b); if (!atual) return; // nunca arrastada: a regra de CSS (splitCenterScript) cuida
+      const alvo = { x: Math.min(Math.max(0, home.x), Math.max(0, innerWidth - b.offsetWidth)),
+                     y: Math.min(Math.max(0, home.y), Math.max(0, innerHeight - b.offsetHeight)) };
+      if (Math.abs(alvo.x - atual.x) > MARGEM || Math.abs(alvo.y - atual.y) > MARGEM) await arrasta(b, atual, alvo);
+    };
+    let t; window.addEventListener('resize', () => { clearTimeout(t); t = setTimeout(confere, 400); }); // depois do clamp do jogo
+    setInterval(confere, 3000); // barra que (re)aparece com o HUD ou carrega ja empurrada
+  })()`;
   const setSplit = (i, on, agora = false) => (off[i] || !webviews[i]) ? Promise.resolve()
     : webviews[i].executeJavaScript(`window.__pgSetSplit && window.__pgSetSplit(${on}, ${agora})`).catch(() => {});
 
@@ -315,6 +370,7 @@
         wv.executeJavaScript(ecoScript(eco ? 15 : 0)).catch(() => {});
         wv.executeJavaScript(cleanScript(cleanOn)).catch(() => {});
         wv.executeJavaScript(splitCenterScript).catch(() => {});
+        wv.executeJavaScript(keepBarScript).catch(() => {});
         setSplit(i, !panel.classList.contains('expanded'), true); // recarregou ja expandido: prende so ao recolher
         // jogo congelado com pagina viva: WebGL perdeu o contexto e nao restaurou em 4s -> recarrega
         wv.executeJavaScript("(()=>{if(window.__pgGlWd)return;window.__pgGlWd=1;let tm;document.addEventListener('webglcontextlost',()=>{clearTimeout(tm);tm=setTimeout(()=>location.reload(),4000);},true);document.addEventListener('webglcontextrestored',()=>clearTimeout(tm),true);})()").catch(() => {});
