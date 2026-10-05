@@ -195,6 +195,29 @@
     s.textContent = '.chat, .sidebar { display: none !important }';
   })()`;
 
+  // ----- Barra de ataques no lugar ao expandir: enquanto o jogador nunca arrastou a barra, o CSS
+  // do jogo a centraliza na tela (.spellbar-shell { left: 50% }), entao ao expandir o painel ela
+  // pula pro meio da tela inteira, enquanto as outras janelas ficam onde estavam (o jogo guarda a
+  // distancia delas ate a esquerda). Guarda a largura do painel na tela dividida (--pg-home-w) e
+  // centraliza a barra nessa largura. So CSS e so na barra sem posicao propria (sem left inline):
+  // depois de arrastada quem manda e o jogo, sem nada brigando com ele.
+  const splitCenterScript = `(() => {
+    if (window.__pgSplitCenter) return; window.__pgSplitCenter = true;
+    const root = document.documentElement;
+    let split = true;
+    const grava = () => { if (split) root.style.setProperty('--pg-home-w', innerWidth + 'px'); };
+    // chamado ANTES de expandir (false) e antes de recolher (true): o resize que vem depois so
+    // grava a largura se o painel estiver na tela dividida
+    window.__pgSetSplit = (on) => { split = on; };
+    window.addEventListener('resize', grava);
+    grava();
+    const s = document.createElement('style'); s.id = 'pg-split-center';
+    s.textContent = '.spellbar-shell:not([style*="left"]) { left: calc(var(--pg-home-w, 100vw) / 2) !important }';
+    document.head.appendChild(s);
+  })()`;
+  const setSplit = (i, on) => (off[i] || !webviews[i]) ? Promise.resolve()
+    : webviews[i].executeJavaScript(`window.__pgSetSplit && window.__pgSetSplit(${on})`).catch(() => {});
+
   // ----- Login automático: vigia contínuo (a SPA nao navega de pagina ao deslogar) -----
   // Acha os campos pelo autocomplete (email / current-password), que sao atributos reais do
   // formulario de login do jogo e nao mudam com minificacao. Se a aba de login nao estiver
@@ -285,6 +308,8 @@
         wv.setAudioMuted(muted); wv.setZoomFactor(zoom);
         wv.executeJavaScript(ecoScript(eco ? 15 : 0)).catch(() => {});
         wv.executeJavaScript(cleanScript(cleanOn)).catch(() => {});
+        wv.executeJavaScript(splitCenterScript).catch(() => {});
+        setSplit(i, !panel.classList.contains('expanded')); // recarregou ja expandido: nao grava essa largura
         // jogo congelado com pagina viva: WebGL perdeu o contexto e nao restaurou em 4s -> recarrega
         wv.executeJavaScript("(()=>{if(window.__pgGlWd)return;window.__pgGlWd=1;let tm;document.addEventListener('webglcontextlost',()=>{clearTimeout(tm);tm=setTimeout(()=>location.reload(),4000);},true);document.addEventListener('webglcontextrestored',()=>clearTimeout(tm),true);})()").catch(() => {});
         injectLoginWatch(wv, accounts[i]);
@@ -331,10 +356,12 @@
   }
   countBtn.onclick = () => setCount(count === 2 ? 1 : count + 1); // cicla 2 -> 1 -> 2
 
-  function toggleExpand(i) {
+  async function toggleExpand(i) {
     const p = grid.children[i];
     if (!p) return; // painel nao existe (rodando menos de 2)
     const on = !p.classList.contains('expanded');
+    // avisa cada painel antes do resize (ver splitCenterScript): so o que vai expandir para de gravar
+    await Promise.all(webviews.map((_, k) => setSplit(k, !(on && k === i))));
     [...grid.children].forEach(c => c.classList.remove('expanded')); // um por vez
     if (on) p.classList.add('expanded');
   }
