@@ -195,28 +195,34 @@
     s.textContent = '.chat, .sidebar { display: none !important }';
   })()`;
 
-  // ----- Barra de ataques no lugar ao expandir: enquanto o jogador nunca arrastou a barra, o CSS
-  // do jogo a centraliza na tela (.spellbar-shell { left: 50% }), entao ao expandir o painel ela
-  // pula pro meio da tela inteira, enquanto as outras janelas ficam onde estavam (o jogo guarda a
-  // distancia delas ate a esquerda). Guarda a largura do painel na tela dividida (--pg-home-w) e
-  // centraliza a barra nessa largura. So CSS e so na barra sem posicao propria (sem left inline):
-  // depois de arrastada quem manda e o jogo, sem nada brigando com ele.
+  // ----- Barra de ataques fixa como as outras janelas: enquanto o jogador nunca arrastou a barra,
+  // o CSS do jogo a centraliza na tela (.spellbar-shell { left: 50% }). Qualquer mudanca de largura
+  // (expandir o painel, maximizar a janela, o Selkies redimensionar a tela do servidor junto com o
+  // navegador) a jogava pro novo meio, enquanto as outras janelas ficam onde estavam (o jogo guarda
+  // a distancia delas ate a esquerda). Prende o centro da barra em px UMA vez, com o painel na tela
+  // dividida (--pg-bar-x), e o CSS so encosta na borda se a tela ficar estreita demais (clamp com a
+  // meia largura real da barra, --pg-bar-hw), sem perder a posicao. So CSS e so na barra sem posicao
+  // propria (sem left inline): depois de arrastada quem manda e o jogo, sem nada brigando com ele.
   const splitCenterScript = `(() => {
     if (window.__pgSplitCenter) return; window.__pgSplitCenter = true;
     const root = document.documentElement;
-    let split = true;
-    const grava = () => { if (split) root.style.setProperty('--pg-home-w', innerWidth + 'px'); };
-    // chamado ANTES de expandir (false) e antes de recolher (true): o resize que vem depois so
-    // grava a largura se o painel estiver na tela dividida
-    window.__pgSetSplit = (on) => { split = on; };
-    window.addEventListener('resize', grava);
-    grava();
+    let split = false, preso = false;
+    const prende = () => { if (split && !preso) { root.style.setProperty('--pg-bar-x', (innerWidth / 2) + 'px'); preso = true; } };
+    // o host avisa se o painel esta na tela dividida (agora = true no dom-ready, pra prender ja);
+    // antes de expandir/recolher so troca o estado, e quem prende e o resize seguinte
+    window.__pgSetSplit = (on, agora) => { split = on; if (agora) prende(); };
+    window.addEventListener('resize', prende);
+    // a barra entra e sai com o HUD: mede a meia largura de tempos em tempos pro clamp do CSS
+    setInterval(() => {
+      const b = document.querySelector('.spellbar-shell');
+      if (b && b.offsetWidth) root.style.setProperty('--pg-bar-hw', (b.offsetWidth / 2) + 'px');
+    }, 2000);
     const s = document.createElement('style'); s.id = 'pg-split-center';
-    s.textContent = '.spellbar-shell:not([style*="left"]) { left: calc(var(--pg-home-w, 100vw) / 2) !important }';
+    s.textContent = '.spellbar-shell:not([style*="left"]) { left: clamp(calc(var(--pg-bar-hw, 0px) + 8px), var(--pg-bar-x, 50vw), calc(100vw - var(--pg-bar-hw, 0px) - 8px)) !important }';
     document.head.appendChild(s);
   })()`;
-  const setSplit = (i, on) => (off[i] || !webviews[i]) ? Promise.resolve()
-    : webviews[i].executeJavaScript(`window.__pgSetSplit && window.__pgSetSplit(${on})`).catch(() => {});
+  const setSplit = (i, on, agora = false) => (off[i] || !webviews[i]) ? Promise.resolve()
+    : webviews[i].executeJavaScript(`window.__pgSetSplit && window.__pgSetSplit(${on}, ${agora})`).catch(() => {});
 
   // ----- Login automático: vigia contínuo (a SPA nao navega de pagina ao deslogar) -----
   // Acha os campos pelo autocomplete (email / current-password), que sao atributos reais do
@@ -309,7 +315,7 @@
         wv.executeJavaScript(ecoScript(eco ? 15 : 0)).catch(() => {});
         wv.executeJavaScript(cleanScript(cleanOn)).catch(() => {});
         wv.executeJavaScript(splitCenterScript).catch(() => {});
-        setSplit(i, !panel.classList.contains('expanded')); // recarregou ja expandido: nao grava essa largura
+        setSplit(i, !panel.classList.contains('expanded'), true); // recarregou ja expandido: prende so ao recolher
         // jogo congelado com pagina viva: WebGL perdeu o contexto e nao restaurou em 4s -> recarrega
         wv.executeJavaScript("(()=>{if(window.__pgGlWd)return;window.__pgGlWd=1;let tm;document.addEventListener('webglcontextlost',()=>{clearTimeout(tm);tm=setTimeout(()=>location.reload(),4000);},true);document.addEventListener('webglcontextrestored',()=>clearTimeout(tm),true);})()").catch(() => {});
         injectLoginWatch(wv, accounts[i]);
