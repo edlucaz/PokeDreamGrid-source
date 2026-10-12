@@ -49,6 +49,28 @@ O app consulta `github.com/edlucaz/PokeDreamGrid-source` (repositório público)
 
 O Windows precisa do alvo NSIS (já configurado) pra suportar atualização automática — o formato "portable" antigo não suporta.
 
+## Android (`android/`)
+
+App nativo (Java, só com `androidx.webkit`, ~110 KB) que roda **até duas contas** e continua farmando minimizado ou com a tela apagada:
+
+- **Serviço em primeiro plano** + wake lock parcial: o Android não mata o app nem congela a CPU. Na primeira abertura ele pede pra sair da economia de bateria (necessário pro Doze não cortar a rede).
+- **Sem tela, o jogo fica escondido** e entra no "Descanso" dele: continua progredindo sem desenhar (CPU ~0%). Com a tela aberta, Modo Eco limita a 15 fps.
+- **Notificação fixa com as estatísticas** da sessão, lidas a cada minuto do `localStorage` do jogo (mesma conta do Analisador): XP/h, saldo/h, kills, capturas, shiny, tempo, e aviso de "sem kills há X min". Botões Recarregar/Desligar.
+- **Watchdog**: recria o jogo se o processo do WebView morrer ou o JS parar de responder por 3 min; recarrega com backoff se a página falhar e na hora quando a rede volta; avisa se deslogar.
+- **Duas contas** (Opções → Segunda conta): cada uma num perfil próprio do WebView (`MULTI_PROFILE`, cookies/localStorage separados, como as partições `persist:contaN` do PC). A conta 1 fica no perfil padrão, então o login de antes continua. A tela mostra uma por vez (botões 1/2 ao lado da engrenagem); a outra fica escondida no Descanso, farmando. A notificação mostra as duas. Precisa de WebView/Chrome 110+; em aparelho com WebView antigo a opção avisa e não liga.
+- Login automático opcional por conta (senha cifrada no Keystore do Android), relatório de erros compartilhável, checagem de atualização nas Releases (12h).
+
+Build (JDK 17 + Android SDK em `/mnt/backup500gb/Android`):
+
+```bash
+cd android
+JAVA_HOME=/mnt/backup500gb/Android/jdk ./gradlew assembleRelease   # -> app/build/outputs/apk/release/PokeDreamGrid-android-<versionCode>.apk
+```
+
+A assinatura usa `android/keystore.properties` (fora do git) → `/mnt/backup500gb/Android/keys/pokedreamgrid.jks`. **Faça backup dessa chave**: sem ela, versões novas não instalam por cima.
+
+Pra publicar atualização: suba `versionCode`/`versionName` em `android/app/build.gradle`, gere o APK e anexe numa Release do GitHub com o nome `PokeDreamGrid-android-<versionCode>.apk`. O app procura esse nome em qualquer Release.
+
 ## Por dentro
 
 Igual ao PokeGrid: cada painel é um `<webview>` do Electron com partição própria. Tudo está em `main.js`, `preload.js` e `index.html`, sem nada escondido.
